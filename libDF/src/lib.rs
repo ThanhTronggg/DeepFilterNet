@@ -135,9 +135,6 @@ impl DFState {
         let wnorm = 1. / (window_size.pow(2) as f32 / (2 * frame_size) as f32);
         let mean_norm_state = Vec::new();
         let unit_norm_state = Vec::new();
-        eprintln!("=========================================");
-        eprintln!(">>> RUST LOG: DANG KHOI TAO MO HINH <<<");
-        eprintln!("=========================================");
 
         DFState {
             sr,
