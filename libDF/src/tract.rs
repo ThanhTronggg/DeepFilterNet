@@ -526,7 +526,7 @@ impl DfTract {
         if max_a > 0.9999 {
             log::warn!("Possible clipping detected ({:.3}).", max_a)
         }
-
+        
         // Signal model: y = f(s + n) = f(x)
         self.rolling_spec_buf_y.pop_front();
         self.rolling_spec_buf_x.pop_front();

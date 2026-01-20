@@ -19,7 +19,7 @@ from df.model import ModelParams
 from df.modules import get_device
 from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
 from df.version import version
-from libdf import DF, erb, erb_norm, unit_norm
+from libdf import DF, Agc, erb, erb_norm, unit_norm
 
 PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2", "DeepFilterNet3")
 DEFAULT_MODEL = "DeepFilterNet3"
@@ -78,6 +78,10 @@ def main(args):
         audio = enhance(
             model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
         )
+        if args.agc:
+            agc = Agc(0.05, 2e-5, 0.5)
+            audio_np = audio.numpy()
+            agc.process(audio_np, 100.0)
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
@@ -375,6 +379,7 @@ def run():
         help="Don't add the model suffix to the enhanced audio files",
     )
     parser.add_argument("--no-df-stage", action="store_true")
+    parser.add_argument("--agc", action="store_true", help="Enable Automatic Gain Control")
     args = parser.parse_args()
     main(args)
 

@@ -2,6 +2,7 @@ use df::transforms::{
     self, erb_inv_with_output as erb_inv_transform, erb_with_output as erb_transform,
     TransformError,
 };
+use df::agc::Agc as DF_Agc;
 use df::{Complex32, DFState, UNIT_NORM_INIT};
 use ndarray::{Array1, Array2, Array3, Array4, ArrayD, ArrayView4, Axis, ShapeError};
 use numpy::{
@@ -135,9 +136,36 @@ impl DF {
     }
 }
 
+#[pyclass(name = "Agc")]
+struct PyAgc {
+    state: DF_Agc,
+}
+
+#[pymethods]
+impl PyAgc {
+    #[new]
+    fn new(desired_output_rms: f32, distortion_factor: f32, snr_thresh: f32) -> Self {
+        PyAgc {
+            state: DF_Agc::new(desired_output_rms, distortion_factor, snr_thresh),
+        }
+    }
+
+    fn process<'py>(
+        &mut self,
+        _py: Python<'py>,
+        samples: &'py PyArray2<f32>,
+        snr: Option<f32>,
+    ) -> PyResult<()> {
+        let mut samples_rw = unsafe { samples.as_array_mut() };
+        self.state.process(samples_rw, snr);
+        Ok(())
+    }
+}
+
 #[pymodule]
 fn libdf(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<DF>()?;
+    m.add_class::<PyAgc>()?;
 
     #[pyfn(m)]
     #[pyo3(name = "erb")]
