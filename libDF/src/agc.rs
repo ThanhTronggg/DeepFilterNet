@@ -27,19 +27,15 @@ impl Agc {
     pub fn process(&mut self, mut samples: ArrayViewMut2<f32>, snr: Option<f32>) {
         let frozen = snr.unwrap_or_default() < self.snr_thresh;
         if frozen {
-            // Apply gain and clamp to prevent clipping
             samples.map_inplace(|s| {
                 *s *= self.gain;
-                if *s > 0.99 { *s = 0.99; }
-                else if *s < -0.99 { *s = -0.99; }
+                *s = s.tanh();
             });
         } else {
             for mut s in samples.axis_iter_mut(Axis(1)) {
                 s.map_inplace(|s| {
                     *s *= self.gain;
-                    // Hard limiter
-                    if *s > 0.99 { *s = 0.99; }
-                    else if *s < -0.99 { *s = -0.99; }
+                    *s = s.tanh();
                 });
                 let y = s.mean().unwrap().powi(2) / self.desired_output_rms;
                 let z = 1.0 + (self.distortion_factor * (1.0 - y));

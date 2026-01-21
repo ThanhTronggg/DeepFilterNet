@@ -75,13 +75,34 @@ def main(args):
         audio = audio.squeeze(0)
         progress = (i + 1) / n_samples * 100
         t0 = time.time()
+        if args.agc:
+            # Tuned AGC: 1e-4 adaptation speed (faster startup), with Silence Freeze
+            agc = Agc(0.02, 1e-4, 0.5)
+            audio_np = audio.numpy()
+            
+            # Process in chunks to enable gain freezing during silence
+            chunk_dur = 0.02  # 20ms
+            chunk_size = int(df_sr * chunk_dur)
+            for i_chunk in range(0, audio_np.shape[-1], chunk_size):
+                chunk = audio_np[..., i_chunk : i_chunk + chunk_size]
+                # Simple energy based VAD
+                # 0.02 target power ~ -17 dB
+                # Threshold for silence: -50 dB ref < 1.0 peak
+                frame_energy = (chunk ** 2).mean()
+                if frame_energy < 1e-7:
+                    snr = 0.0
+                else:
+                    snr = 100.0
+                agc.process(chunk, snr)
+
+            audio = torch.from_numpy(audio_np)
+            agc_save = resample(audio.clone().to("cpu"), df_sr, audio_sr)
+            save_audio(file, agc_save, sr=audio_sr, output_dir=args.output_dir, suffix="agc_only", log=False)
+
         audio = enhance(
             model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
         )
-        if args.agc:
-            agc = Agc(0.05, 2e-5, 0.5)
-            audio_np = audio.numpy()
-            agc.process(audio_np, 100.0)
+
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
