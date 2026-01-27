@@ -6,7 +6,11 @@ use wasm_bindgen::prelude::*;
 use crate::tract::*;
 
 #[wasm_bindgen]
-pub struct DFState(crate::tract::DfTract);
+pub struct DFState {
+    tract: crate::tract::DfTract,
+    #[cfg(feature = "agc")]
+    agc: Option<crate::agc::Agc>,
+}
 
 #[wasm_bindgen]
 impl DFState {
@@ -15,7 +19,11 @@ impl DFState {
         let df_params = DfParams::from_bytes(model_bytes).expect("Could not load model from path");
         let m =
             DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
-        DFState(m)
+        DFState {
+            tract: m,
+            #[cfg(feature = "agc")]
+            agc: None,
+        }
     }
     fn boxed(self) -> Box<DFState> {
         Box::new(self)
@@ -44,7 +52,7 @@ pub unsafe fn df_create(
 #[wasm_bindgen]
 pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
     let state = st.as_mut().expect("Invalid pointer");
-    state.0.hop_size
+    state.tract.hop_size
 }
 
 /// Set DeepFilterNet attenuation limit.
@@ -54,7 +62,7 @@ pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
 #[wasm_bindgen]
 pub unsafe fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
     let state = st.as_mut().expect("Invalid pointer");
-    state.0.set_atten_lim(lim_db)
+    state.tract.set_atten_lim(lim_db)
 }
 
 /// Set DeepFilterNet post filter beta. A beta of 0 disables the post filter.
@@ -64,7 +72,25 @@ pub unsafe fn df_set_atten_lim(st: *mut DFState, lim_db: f32) {
 #[wasm_bindgen]
 pub unsafe fn df_set_post_filter_beta(st: *mut DFState, beta: f32) {
     let state = st.as_mut().expect("Invalid pointer");
-    state.0.set_pf_beta(beta)
+    state.tract.set_pf_beta(beta)
+}
+
+#[cfg(feature = "agc")]
+#[wasm_bindgen]
+pub unsafe fn df_set_agc_params(
+    st: *mut DFState,
+    enabled: bool,
+    desired_output_rms: f32,
+    distortion_factor: f32,
+    snr_thresh: f32,
+) {
+    let state = st.as_mut().expect("Invalid pointer");
+    if enabled {
+        let agc = crate::agc::Agc::new(desired_output_rms, distortion_factor, snr_thresh);
+        state.agc = Some(agc);
+    } else {
+        state.agc = None;
+    }
 }
 
 /// Processes a chunk of samples.
@@ -79,10 +105,20 @@ pub unsafe fn df_set_post_filter_beta(st: *mut DFState, beta: f32) {
 #[wasm_bindgen]
 pub unsafe fn df_process_frame(st: *mut DFState, input: &[f32]) -> js_sys::Float32Array {
     let state = st.as_mut().expect("Invalid pointer");
-    let input = ArrayView2::from_shape((1, state.0.hop_size), input).unwrap();
+    let input = ArrayView2::from_shape((1, state.tract.hop_size), input).unwrap();
 
-    let mut output = Array2::zeros((1, state.0.hop_size));
-    let output_view = output.view_mut();
-    let _lsnr = state.0.process(input, output_view).expect("Failed to process DF frame");
+    let mut output = Array2::zeros((1, state.tract.hop_size));
+    let mut output_view = output.view_mut();
+    let lsnr = state
+        .tract
+        .process(input, output_view.view_mut())
+        .expect("Failed to process DF frame");
+
+    #[cfg(feature = "agc")]
+    if let Some(agc) = &mut state.agc {
+        let snr = if lsnr >= 0. { Some(lsnr) } else { None };
+        agc.process(output_view, snr);
+    }
+
     js_sys::Float32Array::from(output.as_slice().unwrap())
 }
