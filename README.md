@@ -140,7 +140,7 @@ To build for the web:
    ```
 2. Run the build command:
    ```bash
-   wasm-pack build libDF --target web --features "wasm,agc"
+   wasm-pack build libDF --target web --features wasm,agc
    ```
    The output will be in `libDF/pkg`. You can also include other features if needed.
 
