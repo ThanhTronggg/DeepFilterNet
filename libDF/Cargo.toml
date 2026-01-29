@@ -9,6 +9,21 @@ license = "MIT/Apache-2.0"
 readme = "../README.md"
 rust-version = "1.70"
 
+[profile.release]
+opt-level = 3          # or "z"
+lto = "fat"            # or "thin"
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = ['-O4', '--enable-simd', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']
+
+[package.metadata.wasm-pack.profile.profiling]
+wasm-opt = ['-O4', '--enable-simd', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O4', '--enable-simd', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']
+
 [lib]
 name = "df"
 path = "src/lib.rs"
