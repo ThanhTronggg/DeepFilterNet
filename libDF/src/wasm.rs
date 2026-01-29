@@ -105,20 +105,21 @@ pub unsafe fn df_set_agc_params(
 #[wasm_bindgen]
 pub unsafe fn df_process_frame(st: *mut DFState, input: &[f32]) -> js_sys::Float32Array {
     let state = st.as_mut().expect("Invalid pointer");
-    let input = ArrayView2::from_shape((1, state.tract.hop_size), input).unwrap();
-
-    let mut output = Array2::zeros((1, state.tract.hop_size));
-    let mut output_view = output.view_mut();
-    let lsnr = state
-        .tract
-        .process(input, output_view.view_mut())
-        .expect("Failed to process DF frame");
+    let input_view_ro = ArrayView2::from_shape((1, state.tract.hop_size), input).unwrap();
+    let mut input_owned = input_view_ro.to_owned();
+    let mut input_view = input_owned.view_mut();
 
     #[cfg(feature = "agc")]
     if let Some(agc) = &mut state.agc {
-        let snr = if lsnr >= 0. { Some(lsnr) } else { None };
-        agc.process(output_view, snr);
+        agc.process(input_view.view_mut(), None);
     }
+
+    let mut output = Array2::zeros((1, state.tract.hop_size));
+    let mut output_view = output.view_mut();
+    let _lsnr = state
+        .tract
+        .process(input_view.view(), output_view.view_mut())
+        .expect("Failed to process DF frame");
 
     js_sys::Float32Array::from(output.as_slice().unwrap())
 }

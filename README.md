@@ -131,6 +131,19 @@ maturin develop --release -m pyDF-data/Cargo.toml
 maturin develop --release --features hdf5-static -m pyDF-data/Cargo.toml
 ```
 
+### Build WASM from Source
+
+To build for the web:
+1. Install `wasm-pack` if you haven't:
+   ```bash
+   cargo install wasm-pack
+   ```
+2. Run the build command:
+   ```bash
+   wasm-pack build libDF --target web --features "wasm,agc"
+   ```
+   The output will be in `libDF/pkg`. You can also include other features if needed.
+
 ### Use DeepFilterNet from command line
 
 To enhance noisy audio files using DeepFilterNet run
