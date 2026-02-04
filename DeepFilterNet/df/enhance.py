@@ -19,7 +19,7 @@ from df.model import ModelParams
 from df.modules import get_device
 from df.utils import as_complex, as_real, download_file, get_cache_dir, get_norm_alpha
 from df.version import version
-from libdf import DF, erb, erb_norm, unit_norm
+from libdf import DF, Agc, erb, erb_norm, unit_norm
 
 PRETRAINED_MODELS = ("DeepFilterNet", "DeepFilterNet2", "DeepFilterNet3")
 DEFAULT_MODEL = "DeepFilterNet3"
@@ -75,9 +75,34 @@ def main(args):
         audio = audio.squeeze(0)
         progress = (i + 1) / n_samples * 100
         t0 = time.time()
+        if args.agc:
+            # Tuned AGC: 1e-4 adaptation speed (faster startup), with Silence Freeze
+            agc = Agc(0.02, 1e-4, 0.5)
+            audio_np = audio.numpy()
+            
+            # Process in chunks to enable gain freezing during silence
+            chunk_dur = 0.02  # 20ms
+            chunk_size = int(df_sr * chunk_dur)
+            for i_chunk in range(0, audio_np.shape[-1], chunk_size):
+                chunk = audio_np[..., i_chunk : i_chunk + chunk_size]
+                # Simple energy based VAD
+                # 0.02 target power ~ -17 dB
+                # Threshold for silence: -50 dB ref < 1.0 peak
+                frame_energy = (chunk ** 2).mean()
+                if frame_energy < 1e-7:
+                    snr = 0.0
+                else:
+                    snr = 100.0
+                agc.process(chunk, snr)
+
+            audio = torch.from_numpy(audio_np)
+            agc_save = resample(audio.clone().to("cpu"), df_sr, audio_sr)
+            save_audio(file, agc_save, sr=audio_sr, output_dir=args.output_dir, suffix="agc_only", log=False)
+
         audio = enhance(
             model, df_state, audio, pad=args.compensate_delay, atten_lim_db=args.atten_lim
         )
+
         t1 = time.time()
         t_audio = audio.shape[-1] / df_sr
         t = t1 - t0
@@ -375,6 +400,7 @@ def run():
         help="Don't add the model suffix to the enhanced audio files",
     )
     parser.add_argument("--no-df-stage", action="store_true")
+    parser.add_argument("--agc", action="store_true", help="Enable Automatic Gain Control")
     args = parser.parse_args()
     main(args)
 

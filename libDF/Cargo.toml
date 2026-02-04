@@ -92,6 +92,7 @@ wasm = [
   "dep:js-sys",
 ]
 hdf5-static = ["hdf5?/static"]
+agc = ["dep:ndarray"]
 
 [dependencies]
 rustfft = "^6.1.0"

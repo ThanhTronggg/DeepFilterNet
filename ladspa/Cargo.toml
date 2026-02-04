@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [features]
 dbus = ["dep:zbus", "dep:event-listener"]
+agc = ["deep_filter/agc"]
 default-model-ll = ["deep_filter/default-model-ll"]
 default = ["default-model-ll"]
 
@@ -18,6 +19,7 @@ deep_filter = { path = "../libDF", default-features = false, features = [
   "tract",
   "use-jemalloc",
   "default-model",
+  "logging"
 ] }
 ladspa = "0.3.4"
 ndarray = "^0.15"
