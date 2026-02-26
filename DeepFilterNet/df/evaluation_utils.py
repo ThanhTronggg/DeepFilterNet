@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from functools import partial
 from multiprocessing.dummy import Pool as DummyPool
+from tempfile import NamedTemporaryFile
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -21,6 +22,7 @@ from torchaudio.transforms import Resample
 from df.enhance import df_features
 from df.io import get_resample_params, load_audio, resample, save_audio
 from df.model import ModelParams
+from df.scripts import dnsmos_dns5 as dnsmos5
 from df.scripts.dnsmos import dnsmos_api_req, dnsmos_local, download_onnx_models
 from df.sepm import composite as composite_py
 from df.utils import as_complex, get_device
@@ -81,6 +83,7 @@ def get_metrics(sr: int):
         "composite-octave": partial(CompositeMetric, sr=sr, use_octave=True),
         "pesq": partial(PesqMetric, sr=sr),
         "pesq-nb": partial(PesqMetric, sr=sr, nb=True),
+        "dnsmos5": partial(DnsMos5Metric, sr=sr),
     }
 
 
@@ -206,7 +209,7 @@ def evaluation_loop_dns(
     df_state: DF,
     model,
     noisy_files: List[str],
-    metrics: List[str] = ["p835_local"],  # type: ignore
+    metrics: List[str] = ["v5"],  # type: ignore
     save_audio_callback: Optional[Callable[[str, Tensor], None]] = None,
     n_workers: int = 8,
     log_percent: int = 10,
@@ -217,9 +220,8 @@ def evaluation_loop_dns(
 ) -> Dict[str, float]:
     sr = df_state.sr()
     metrics_dict = {
-        "p808": partial(DnsMosP808ApiMetric, sr=sr),
-        "p835": partial(DnsMosP835ApiMetric, sr=sr),
-        "p835_local": partial(DnsMosP835LocalMetric, sr=sr),
+        "v5": partial(DnsMos5Metric, sr=sr),
+        "v1": partial(DnsMosP835LocalMetric, sr=sr),
     }
     with DummyPool(processes=max(1, n_workers)) as pool:
         metrics: List[NoisyMetric] = [metrics_dict[m.lower()](pool=pool) for m in metrics]
@@ -370,11 +372,14 @@ class MPMetric(Metric):
             assert clean.shape == noisy.shape, f"{clean.shape}, {noisy.shape}, {fn}"
         clean = self.maybe_resample(torch.as_tensor(clean)).squeeze(0)
         enhanced = self.maybe_resample(torch.as_tensor(enhanced)).squeeze(0)
+        assert enhanced.isfinite().all(), f"Error processing file {fn}"
         h = self.pool.apply_async(
             self.compute_metric,
             (clean, enhanced),
             callback=lambda x: self._add_values_enh(x, fn),
-            error_callback=logger.error,
+            error_callback=lambda e: logger.error(
+                f"Error computing {self.name} metric for enhanced sample {fn}: {e}"
+            ),
         )
         self.worker_results.append(h)
         if noisy is not None:
@@ -383,7 +388,9 @@ class MPMetric(Metric):
                 self.compute_metric,
                 (clean, noisy),
                 callback=lambda x: self._add_values_noisy(x, fn),
-                error_callback=logger.error,
+                error_callback=lambda e: logger.error(
+                    f"Error computing {self.name} metric for noisy sample {fn}: {e}"
+                ),
             )
             self.worker_results.append(h)
 
@@ -492,6 +499,23 @@ class NoisyMetric(MPMetric):
         pass
 
 
+class DnsMos5Metric(NoisyMetric):
+    def __init__(self, sr: int, pool: Pool):
+        name = dnsmos5.NAMES
+        super().__init__(name, pool=pool, source_sr=sr, target_sr=16000)
+        primary_model_path, p808_model_path = dnsmos5.download_onnx_models()
+        self.compute_score = dnsmos5.ComputeScore(primary_model_path, p808_model_path)
+
+    def compute_metric(self, degraded) -> Union[float, np.ndarray]:
+        assert self.sr is not None
+        with NamedTemporaryFile(suffix=".wav") as nf:
+            save_audio(nf.name, degraded, self.sr, dtype=torch.float32)
+            scores = dnsmos5.eval_sample_dnsmos(
+                nf.name, log=False, compute_score=self.compute_score
+            )
+            return np.asarray([scores[n] for n in self.name])
+
+
 class DnsMosP808ApiMetric(NoisyMetric):
     def __init__(self, sr: int, pool: Pool):
         super().__init__(name="MOS", pool=pool, source_sr=sr, target_sr=16000)
@@ -560,8 +584,6 @@ def composite(
         degraded = resample(torch.as_tensor(degraded), sr, 16000, method=RESAMPLE_METHOD).numpy()
         sr = 16000
     if use_octave:
-        from tempfile import NamedTemporaryFile
-
         assert semetrics is not None
 
         with NamedTemporaryFile(suffix=".wav") as cf, NamedTemporaryFile(suffix=".wav") as nf:

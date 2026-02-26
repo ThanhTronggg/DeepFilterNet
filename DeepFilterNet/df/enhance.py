@@ -45,7 +45,7 @@ class AudioDataset(Dataset):
 
 
 def main(args):
-    model, df_state, suffix = init_df(
+    model, df_state, suffix, epoch = init_df(
         args.model_base_dir,
         post_filter=args.pf,
         log_level=args.log_level,
@@ -84,7 +84,7 @@ def main(args):
         rtf = t / t_audio
         fn = os.path.basename(file)
         p_str = f"{progress:2.0f}% | " if n_samples > 1 else ""
-        logger.info(f"{p_str}Enhanced noisy audio file '{fn}' in {t:.1f}s (RT factor: {rtf:.3f})")
+        logger.info(f"{p_str}Enhanced noisy audio file '{fn}' in {t:.2f}s (RT factor: {rtf:.3f})")
         audio = resample(audio.to("cpu"), df_sr, audio_sr)
         save_audio(file, audio, sr=audio_sr, output_dir=args.output_dir, suffix=suffix, log=False)
 
@@ -103,11 +103,11 @@ def init_df(
     post_filter: bool = False,
     log_level: str = "INFO",
     log_file: Optional[str] = "enhance.log",
-    config_allow_defaults: bool = False,
+    config_allow_defaults: bool = True,
     epoch: Union[str, int, None] = "best",
     default_model: str = DEFAULT_MODEL,
     mask_only: bool = False,
-) -> Tuple[nn.Module, DF, str]:
+) -> Tuple[nn.Module, DF, str, int]:
     """Initializes and loads config, model and deep filtering state.
 
     Args:
@@ -125,6 +125,7 @@ def init_df(
         df_state (DF): Deep filtering state for stft/istft/erb
         suffix (str): Suffix based on the model name. This can be used for saving the enhanced
             audio.
+        epoch (int): Epoch number of the loaded checkpoint.
     """
     try:
         from icecream import ic, install
@@ -150,7 +151,12 @@ def init_df(
     )
     if post_filter:
         config.set("mask_pf", True, bool, ModelParams().section)
-        logger.info("Running with post-filter")
+        try:
+            beta = config.get("pf_beta", float, ModelParams().section)
+            beta = f"(beta: {beta})"
+        except KeyError:
+            beta = ""
+        logger.info(f"Running with post-filter {beta}")
     p = ModelParams()
     df_state = DF(
         sr=p.sr,
@@ -178,7 +184,7 @@ def init_df(
         suffix += "_pf"
     logger.info("Running on device {}".format(get_device()))
     logger.info("Model loaded")
-    return model, df_state, suffix
+    return model, df_state, suffix, epoch
 
 
 def df_features(audio: Tensor, df: DF, nb_df: int, device=None) -> Tuple[Tensor, Tensor, Tensor]:
@@ -290,8 +296,11 @@ class PrintVersion(argparse.Action):
         exit(0)
 
 
-def setup_df_argument_parser(default_log_level: str = "INFO") -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+def setup_df_argument_parser(
+    default_log_level: str = "INFO", parser=None
+) -> argparse.ArgumentParser:
+    if parser is None:
+        parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-base-dir",
         "-m",

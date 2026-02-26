@@ -17,7 +17,10 @@ from df.modules import (
     erb_fb,
     get_device,
 )
+from df.utils import as_complex
 from libdf import DF
+
+PI = 3.1415926535897932384626433
 
 
 class ModelParams(DfParams):
@@ -69,6 +72,7 @@ class ModelParams(DfParams):
             "ENC_LINEAR_GROUPS", cast=int, default=16, section=self.section
         )
         self.mask_pf: bool = config("MASK_PF", cast=bool, default=False, section=self.section)
+        self.pf_beta: float = config("PF_BETA", cast=float, default=0.02, section=self.section)
         self.lsnr_dropout: bool = config(
             "LSNR_DROPOUT", cast=bool, default=False, section=self.section
         )
@@ -243,7 +247,7 @@ class ErbDecoder(nn.Module):
             p.conv_ch, 1, kernel_size=p.conv_kernel, activation_layer=nn.Sigmoid
         )
 
-    def forward(self, emb: Tensor, e3: Tensor, e2: Tensor, e1: Tensor, e0: Tensor, hidden: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, emb: Tensor, e3: Tensor, e2: Tensor, e1: Tensor, e0: Tensor) -> Tensor:
         # Estimates erb mask
         b, _, t, f8 = e3.shape
         emb, hidden = self.emb_gru(emb, hidden)
@@ -322,7 +326,7 @@ class DfDecoder(nn.Module):
         self.df_out = nn.Sequential(df_out, nn.Tanh())
         self.df_fc_a = nn.Sequential(nn.Linear(self.df_n_hidden, 1), nn.Sigmoid())
 
-    def forward(self, emb: Tensor, c0: Tensor, hidden: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, emb: Tensor, c0: Tensor) -> Tensor:
         b, t, _ = emb.shape
         c, hidden = self.df_gru(emb, hidden)  # [B, T, H], H: df_n_hidden
         if self.df_skip is not None:
@@ -330,13 +334,15 @@ class DfDecoder(nn.Module):
         c0 = self.df_convp(c0).permute(0, 2, 3, 1)  # [B, T, F, O*2], channels_last
         c = self.df_out(c)  # [B, T, F*O*2], O: df_order
         c = c.view(b, t, self.df_bins, self.df_out_ch) + c0  # [B, T, F, O*2]
-        return c, hidden
+        return c
 
 
 class DfNet(nn.Module):
     run_df: Final[bool]
     run_erb: Final[bool]
     lsnr_droput: Final[bool]
+    post_filter: Final[bool]
+    post_filter_beta: Final[float]
 
     def __init__(
         self,
@@ -366,7 +372,10 @@ class DfNet(nn.Module):
         self.register_buffer("erb_fb", erb_fb)
         self.enc = Encoder()
         self.erb_dec = ErbDecoder()
-        self.mask = Mask(erb_inv_fb, post_filter=p.mask_pf)
+        self.mask = Mask(erb_inv_fb)
+        self.erb_inv_fb = erb_inv_fb
+        self.post_filter = p.mask_pf
+        self.post_filter_beta = p.pf_beta
 
         self.df_order = p.df_order
         self.df_op = MF.DF(num_freqs=p.nb_df, frame_size=p.df_order, lookahead=self.df_lookahead)
@@ -436,14 +445,22 @@ class DfNet(nn.Module):
 
         if self.run_df:
             if self.lsnr_droput:
-                df_coefs[:, idcs], _ = self.df_dec(emb, c0, hidden=None)
+                df_coefs[:, idcs] = self.df_dec(emb, c0)
             else:
-                df_coefs, _ = self.df_dec(emb, c0, hidden=None)
+                df_coefs = self.df_dec(emb, c0)
             df_coefs = self.df_out_transform(df_coefs)
-            spec = self.df_op(spec, df_coefs)
-            spec[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
+            spec_e = self.df_op(spec.clone(), df_coefs)
+            spec_e[..., self.nb_df :, :] = spec_m[..., self.nb_df :, :]
         else:
             df_coefs = torch.zeros((), device=spec.device)
-            spec = spec_m
+            spec_e = spec_m
 
-        return spec, m, lsnr, df_coefs
+        if self.post_filter:
+            beta = self.post_filter_beta
+            eps = 1e-12
+            mask = (as_complex(spec_e).abs() / as_complex(spec).abs().add(eps)).clamp(eps, 1)
+            mask_sin = mask * torch.sin(PI * mask / 2).clamp_min(eps)
+            pf = (1 + beta) / (1 + beta * mask.div(mask_sin).pow(2))
+            spec_e = spec_e * pf.unsqueeze(-1)
+
+        return spec_e, m, lsnr, df_coefs

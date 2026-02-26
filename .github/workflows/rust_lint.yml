@@ -19,14 +19,14 @@ jobs:
         include:
           - {command: fmt, rust: nightly, args: '--all -- --check', hdf5: false}
           - {command: clippy, rust: nightly, args: '-p df-demo --tests --all-features -- -D warnings', alsa: true}
-          - {command: clippy, rust: stable, args: '-p deep_filter --tests --all-features -- -D warnings', hdf5: true}
+          - {command: clippy, rust: nightly, args: '-p deep_filter --tests --all-features -- -D warnings', hdf5: true}
           - {command: test, rust: stable, args: '--all-features -p deep_filter', hdf5: true}
           - {command: build, rust: stable, args: '-p deep_filter', hdf5: false}
           - {command: build, rust: stable, args: '-p DeepFilterLib', hdf5: false}
           - {command: build, rust: stable, args: '-p DeepFilterDataLoader', hdf5: true}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           cargo ${{matrix.command}} ${{matrix.args}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: matrix.command == 'test'
         with:
           name: test-artifacts

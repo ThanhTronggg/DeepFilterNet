@@ -21,7 +21,7 @@ jobs:
       upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
       - name: Checkout DeepFilterNet
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -56,34 +56,56 @@ jobs:
         python:
           - version: "3.8"
             tag: "38"
-            abi: "38"
+            abi: cp38-cp38
           - version: "3.9"
             tag: "39"
-            abi: "39"
+            abi: cp39-cp39
           - version: "3.10"
             tag: "310"
-            abi: "310"
+            abi: cp310-cp310
+          - version: "3.11"
+            tag: "311"
+            abi: cp311-cp311
         df_wheel: ["pyDF", "pyDF-data"]
-        os: ["ubuntu-22.04", "macos-13", "windows-2022"]
+        build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
         include:
-          - os: ubuntu-22.04
+          - build: linux-x86
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_x86_64:latest
-          - os: macos-13
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            # container: quay.io/pypa/manylinux_2_28_aarch64:latest
+            container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
+          # - build: linux-arm-v7
+            # os: ubuntu-22.04
+            # target: armv7-unknown-linux-gnueabihf
+            # container: ghcr.io/rust-cross/manylinux_2_28-cross:armv7
+          - build: macos-x86
+            os: macos-13
             target: x86_64-apple-darwin
-          - os: windows-2022
+          - build: macos-aarch64
+            os: macos-13
+            target: aarch64-apple-darwin
+          - build: win-msvc
+            os: windows-2022
             target: x86_64-pc-windows-msvc
         exclude:
-          - os: windows-2022
+          - build: win-msvc
             df_wheel: pyDF-data
-          - os: macos-13
+          - build: macos-x86
+            df_wheel: pyDF-data
+          - build: macos-aarch64
+            df_wheel: pyDF-data
+          - build: linux-arm-aarch64
             df_wheel: pyDF-data
     defaults:
       run:
         shell: bash
     steps:
       - name: Checkout DeepFilterNet
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Echo git tag
         run: |
@@ -102,15 +124,21 @@ jobs:
 
       - name: Install Python
         if: runner.os != 'linux'
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python.version }}
-      - name: Setup Python manylinux
-        if: runner.os == 'linux'
+      - name: Setup Python manylinux x86
+        if: matrix.build == 'linux-x86'
         run: |
-          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/"
+          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/"
           ls -l /etc/*release
-          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.abi }}/bin/" >> $GITHUB_PATH
+          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/" >> $GITHUB_PATH
+      - name: Setup Python manylinux arm
+        if: startsWith(matrix.build, 'linux-arm')
+        run: |
+          ls -l /opt/python/*
+          echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
+          echo "PYO3_CROSS_LIB_DIR=/opt/python/${{matrix.python.abi}}" >> $GITHUB_ENV
 
       - name: Install Maturin
         run: |
@@ -121,6 +149,16 @@ jobs:
         with:
           toolchain: stable
           target: ${{ matrix.target }}
+
+      - name: Build source distribution
+        run: |
+          mkdir -p target/wheels
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --sdist \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
 
       - name: Build wheel unix
         if: runner.os != 'windows'
@@ -145,7 +183,7 @@ jobs:
           delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
           mv target/repaired/* target/wheels/
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: libdf-wheels-${{ needs.create-release.outputs.df_version }}
           path: target/wheels/
@@ -158,8 +196,8 @@ jobs:
         python-version: ["3.10"] # wheel will be independent of python version
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install poetry
@@ -167,7 +205,7 @@ jobs:
       - name: Build wheels
         run: poetry build -vvv
         working-directory: DeepFilterNet
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: deepfilternet-wheels-${{ needs.create-release.outputs.df_version }}
           path: DeepFilterNet/dist/
@@ -176,17 +214,17 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [build-libdf-wheels, build-deepfilternet-wheels, create-release]
     steps:
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
       - name: Show DF version
         run: |
           echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
       - name: Get libdf wheels
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: libdf-wheels-${{ env.DF_VERSION }}
           path: libdf-wheels
       - name: Get deepfilternet wheels
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: deepfilternet-wheels-${{ env.DF_VERSION }}
           path: deepfilternet-wheels
@@ -198,6 +236,8 @@ jobs:
           USER: ${{ secrets.PYPI_USER }}
           PW: ${{ secrets.PYPI_PW }}
         run: |
+          ls -l libdf-wheels/*${{ env.DF_VERSION }}*
+          ls -l deepfilternet-wheels/*${{ env.DF_VERSION }}*
           maturin upload -u "$USER" -p "$PW" libdf-wheels/*${{ env.DF_VERSION }}*
           maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*${{ env.DF_VERSION }}*
 
@@ -227,14 +267,12 @@ jobs:
       image: docker://messense/manylinux${{matrix.manylinux}}-cross:${{matrix.platform.arch}}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-      - name: Install Rust (${{matrix.rust}})
-        uses: actions-rs/toolchain@v1
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
-          toolchain: ${{matrix.rust}}
-          override: true
-          target: ${{matrix.platform.target}}
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.platform.target }}
       - name: Set Python Version
         run: |
           echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
@@ -247,7 +285,7 @@ jobs:
             --target ${{ matrix.platform.target }} \
             --manylinux ${{ matrix.manylinux }} \
             -m pyDF/Cargo.toml
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: libdf-arm-wheels
           path: dist/
@@ -297,7 +335,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -337,7 +375,7 @@ jobs:
           mv "target/${{ matrix.target }}/release/deep-filter${{ matrix.ext }}" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
           chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.DF_BIN_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
@@ -345,7 +383,7 @@ jobs:
       - name: Upload release archive
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+        run: gh release upload --clobber v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
 
   build-deepfilter-ladspa:
     needs: ['create-release']
@@ -363,7 +401,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, win-msvc] #, macos-x86, macos-aarch64
         include:
           - build: linux-x86
             os: ubuntu-22.04
@@ -380,26 +418,26 @@ jobs:
             target: aarch64-unknown-linux-gnu
             libname: libdeep_filter_ladspa
             libext: so
-          - build: macos-x86
-            os: macos-13
-            target: x86_64-apple-darwin
-            libname: libdeep_filter_ladspa
-            libext: dylib
-          - build: macos-aarch64
-            os: macos-13
-            target: aarch64-apple-darwin
-            libname: libdeep_filter_ladspa
-            libext: dylib
           - build: win-msvc
             os: windows-2022
             target: x86_64-pc-windows-msvc
             libname: deep_filter_ladspa
             libext: dll
+          # - build: macos-x86
+          #   os: macos-x86
+          #   target: x86_64-apple-darwin
+          #   libname: libdeep_filter_ladspa
+          #   libext: dylib
+          # - build: macos-aarch64
+          #   os: macos-aarch64
+          #   target: aarch64-apple-darwin
+          #   libname: libdeep_filter_ladspa
+          #   libext: dylib
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -433,7 +471,7 @@ jobs:
         run: |
           mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.DF_LADSPA_NAME }}
           path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}

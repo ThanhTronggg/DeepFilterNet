@@ -1,9 +1,9 @@
 [package]
 name = "DeepFilterLib"
-version = "0.5.3"
+version = "0.5.7-pre"
 authors = ["Hendrik Schröter"]
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.70"
 
 [lib]
 name = "libdf"
@@ -11,13 +11,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-deep_filter = { path = "../libDF", default-features = false, features = [
-  "tract",
-  "use-jemalloc",
-  "default-model",
-] }
-
-pyo3 = { version = "0.19", features = ["extension-module"]}
-numpy = "0.19"
+deep_filter = { features = ["transforms", "logging"], path = "../libDF" }
+pyo3 = { version = "0.20", features = ["extension-module"]}
+numpy = "0.20"
 ndarray = "^0.15"
-tract-core = "^0.19.4"
