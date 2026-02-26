@@ -312,6 +312,49 @@ If you use the multi-frame beamforming algorithms. please cite *Deep Multi-Frame
 }
 ```
 
+## Quantization & Benchmarking (DeepFilterNet3)
+
+This section provides scripts to quantize DeepFilterNet3 models to INT8 and benchmark their performance (speed, variance, CPU usage, and MACs). All scripts are located in the `torchDF/` directory.
+
+### Prerequisites & Setup
+It is recommended to use [uv](https://github.com/astral-sh/uv) for fast environment and dependency management.
+
+```bash
+# Create a virtual environment with Python 3.10
+uv venv --python 3.10
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
+
+# Install dependencies (CPU version for benchmarking)
+uv pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+uv pip install onnxruntime onnx pandas tqdm requests psutil soundfile onnx-tool
+```
+
+### 1. Data Preparation
+To calibrate the quantization process, you need a set of noisy audio files.
+```bash
+uv run python torchDF/down_data.py --calib-dir ./calibration_data
+```
+
+### 2. Static Quantization
+Export and quantize the DeepFilterNet3 model to INT8:
+```bash
+uv run python torchDF/quantize_model.py --model-base-dir DeepFilterNet3 --calib-dir ./calibration_data --output-dir ./quantize/static
+```
+
+### 3. Grid Search for Optimal Quantization
+Automatically test various calibration methods and operator combinations:
+```bash
+uv run python torchDF/quantize_gridsearch.py --model-base-dir DeepFilterNet3 --calib-dir ./calibration_data --output-dir ./quantize/gridsearch
+```
+Summary results are saved to `quantize/gridsearch/gridsearch_results.csv`.
+
+### 4. Detailed Performance Benchmarking (Massive Benchmark)
+Measure inference time, variance, stability, and CPU usage for all models in the gridsearch folder:
+```bash
+uv run python torchDF/test_ort_perf_type.py --eval-folder ./quantize/gridsearch --num-runs 25000
+```
+This generates a detailed benchmark report in `quantize/gridsearch/detailed_ort_benchmark.csv`.
+
 ## License
 
 DeepFilterNet is free and open source! All code in this repository is dual-licensed under either:

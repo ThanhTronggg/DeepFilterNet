@@ -2,6 +2,25 @@
 *.wav
 *.png
 *.pdf
+
+# Model weights & exported binaries (large files, not for git)
+models/
+quantize/
+*.onnx
+*.ort
+*.required_operators.config
+*.required_operators.with_runtime_opt.config
+
+# Temp / scratch
+torchDF/check.py
+torchDF/resample.py
+torchDF/enc.onnx
+torchDF/denoiser_model.ort
+torchDF/denoiser_model.required_operators.config
+
+# Lock files (generated)
+uv.lock
+torchDF/uv.lock
 assets/hostbs.ini
 .cache*
 out/
