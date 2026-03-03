@@ -1,0 +1,5 @@
+Method,Ops Quantized,ONNX Size (MB),ORT Size (MB),QDQ Nodes,Avg MS,Std Dev MS,Variance MS,99th Percentile MS,Filename
+None,Original_FP32,15.39,15.48,0,1.6639,0.5891,0.347059,3.8982,df3_fp32.onnx
+MinMax,Conv,15.34,15.45,105,1.6266,0.4228,0.178788,3.2434,df3_MinMax_Conv.onnx
+MinMax,Conv+MatMul,12.61,12.73,125,2.0427,0.7095,0.503384,4.4023,df3_MinMax_Conv_MatMul.onnx
+MinMax,Conv+Add,15.36,15.49,184,1.8641,0.806,0.649619,4.9473,df3_MinMax_Conv_Add.onnx
