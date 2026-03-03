@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import subprocess
 import glob
@@ -8,6 +9,9 @@ import time
 import numpy as np
 import onnxruntime as ort
 import onnx
+
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 def benchmark_model_internal(model_path, num_runs=5000):
     session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
@@ -34,17 +38,23 @@ def benchmark_model_internal(model_path, num_runs=5000):
     return np.mean(run_times), np.std(run_times), np.var(run_times), np.percentile(run_times, 99)
 
 def run_quantize(calib_method_name, ops_list, base_dir, calib_dir, test_audio, output_dir):
+    ops_list_repr = repr(ops_list)
     ops_str = "_".join(ops_list) if ops_list else "None"
     config_name = f"df3_{calib_method_name}_{ops_str}"
     
     # We use a temporary script to run quantization cleanly without modifying the main script iteratively
     wrapper_script_path = os.path.join(output_dir, f"tmp_{config_name}_runner.py")
     
+    # Root of the DeepFilterNet repo (one level up from torchDF)
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    torchdf_dir = os.path.abspath(os.path.dirname(__file__))
+
     with open(wrapper_script_path, "w") as f:
         f.write(f"""import os
 import sys
-# Insert torchDF path directly
-sys.path.insert(0, "/home/trong/code/DeepFilterNet/torchDF")
+# Insert paths
+sys.path.insert(0, r"{torchdf_dir}")
+sys.path.insert(0, r"{repo_root}")
 
 import onnx
 from onnxruntime.quantization import quantize_static, QuantType, QuantFormat, CalibrationMethod
@@ -53,33 +63,32 @@ from quantize_model import DeepFilterNetCalibrationReader
 class TruncatedReader(DeepFilterNetCalibrationReader):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Cap at 5 files instead of default 400 for speed
+        # Cap for speed
         self.wav_files = self.wav_files[:5]
         print(f"Truncated calibration files to {{len(self.wav_files)}}")
 
 def do_quantize():
-    fp32_model = os.path.join("{output_dir}", "df3_fp32.onnx")
-    int8_model = os.path.join("{output_dir}", "{config_name}.onnx")
+    fp32_model = os.path.join(r"{output_dir}", "df3_fp32.onnx")
+    int8_model = os.path.join(r"{output_dir}", r"{config_name}.onnx")
     
     if not os.path.exists(fp32_model):
         from torch_df_streaming import TorchDFPipeline
         from quantize_model import export_to_onnx
-        pipeline = TorchDFPipeline(model_base_dir="{base_dir}", device='cpu')
+        pipeline = TorchDFPipeline(model_base_dir=r"{base_dir}", device='cpu')
         export_to_onnx(pipeline, fp32_model)
         
-    dr = TruncatedReader("{calib_dir}", fp32_model_path=fp32_model)
+    dr = TruncatedReader(r"{calib_dir}", fp32_model_path=fp32_model)
     onnx_model = onnx.load(fp32_model)
     dr.input_names = [inp.name for inp in onnx_model.graph.input]
     
-    op_types = {ops_list}
-    if "{calib_method_name}" == "MinMax":
-        method = CalibrationMethod.MinMax
-    elif "{calib_method_name}" == "Percentile":
-        method = CalibrationMethod.Percentile
-    elif "{calib_method_name}" == "Distribution":
-        method = CalibrationMethod.Distribution
-    else:
-        method = CalibrationMethod.Entropy
+    op_types = {ops_list_repr}
+    method_map = {{
+        "MinMax": CalibrationMethod.MinMax,
+        "Entropy": CalibrationMethod.Entropy,
+        "Percentile": CalibrationMethod.Percentile,
+        "Distribution": CalibrationMethod.Distribution
+    }}
+    method = method_map.get("{calib_method_name}", CalibrationMethod.Entropy)
         
     quantize_static(
         fp32_model,
@@ -99,7 +108,7 @@ if __name__ == '__main__':
     try:
         # Capture output so we can print it on failure
         result = subprocess.run(
-            ["/home/trong/code/DeepFilterNet/.venv/bin/python3.10", wrapper_script_path], 
+            [sys.executable, wrapper_script_path], 
             check=True, 
             capture_output=True, 
             text=True
@@ -111,12 +120,15 @@ if __name__ == '__main__':
         print(e.stderr)
         print("--------------------")
         return None
+    finally:
+        if os.path.exists(wrapper_script_path):
+             os.remove(wrapper_script_path)
         
     int8_onnx = os.path.join(output_dir, f"{config_name}.onnx")
     int8_ort = os.path.join(output_dir, f"{config_name}.ort")
     
     # Convert to ORT format
-    subprocess.run(["/home/trong/code/DeepFilterNet/.venv/bin/python3.10", "-m", "onnxruntime.tools.convert_onnx_models_to_ort", int8_onnx, "--output_dir", output_dir], check=True, capture_output=True)
+    subprocess.run([sys.executable, "-m", "onnxruntime.tools.convert_onnx_models_to_ort", int8_onnx, "--output_dir", output_dir], check=True, capture_output=True)
     
     return int8_onnx, int8_ort
 
@@ -145,13 +157,14 @@ def generate_grid_search(model_base_dir, calib_dir, test_audio, output_dir):
         
     fp32_ort = os.path.join(output_dir, "df3_fp32.ort")
     if not os.path.exists(fp32_ort):
-        subprocess.run(["/home/trong/code/DeepFilterNet/.venv/bin/python3.10", "-m", "onnxruntime.tools.convert_onnx_models_to_ort", fp32_onnx, "--output_dir", output_dir], check=True, capture_output=True)
+        subprocess.run([sys.executable, "-m", "onnxruntime.tools.convert_onnx_models_to_ort", fp32_onnx, "--output_dir", output_dir], check=True, capture_output=True)
         
     fp32_onnx_size = os.path.getsize(fp32_onnx) / (1024 * 1024)
     fp32_ort_size = os.path.getsize(fp32_ort) / (1024 * 1024)
     
     try:
-        avg_ms, std_ms, var_ms, pct_99 = benchmark_model_internal(fp32_ort, num_runs=25000)
+        # Reduced runs for initial validation in grid search
+        avg_ms, std_ms, var_ms, pct_99 = benchmark_model_internal(fp32_ort, num_runs=1000)
     except Exception as e:
         print(f"Benchmark failed: {e}")
         avg_ms, std_ms, var_ms, pct_99 = (-1, -1, -1, -1)
@@ -175,7 +188,7 @@ def generate_grid_search(model_base_dir, calib_dir, test_audio, output_dir):
     for method in methods:
         for ops in op_combinations:
             current += 1
-            print(f"\\n--- [GridSearch {current}/{total}] Method: {method} | Ops: {ops} ---")
+            print(f"\n--- [GridSearch {current}/{total}] Method: {method} | Ops: {ops} ---")
             
             paths = run_quantize(method, ops, model_base_dir, calib_dir, test_audio, output_dir)
             if not paths:
@@ -191,7 +204,7 @@ def generate_grid_search(model_base_dir, calib_dir, test_audio, output_dir):
             
             print(f"Running Benchmark on {ort_path}...")
             try:
-                avg_ms, std_ms, var_ms, pct_99 = benchmark_model_internal(ort_path, num_runs=25000)
+                avg_ms, std_ms, var_ms, pct_99 = benchmark_model_internal(ort_path, num_runs=1000)
             except Exception as e:
                 print(f"Benchmark failed: {e}")
                 avg_ms, std_ms, var_ms, pct_99 = (-1, -1, -1, -1)
@@ -213,18 +226,21 @@ def generate_grid_search(model_base_dir, calib_dir, test_audio, output_dir):
             df.to_csv(csv_path, index=False)
             print(f"Result saved to CSV at {csv_path}")
             
-    if 'df' in locals():
+    if results:
+        df = pd.DataFrame(results)
         print(df.to_string())
-        print(f"\\nGridSearch completed successfully! Saved to: {csv_path}")
+        print(f"\nGridSearch completed successfully! Saved to: {csv_path}")
     else:
         print("No results generated.")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-base-dir', type=str, default='/home/trong/code/DeepFilterNet/models/DeepFilterNet3/DeepFilterNet3')
-    parser.add_argument('--calib-dir', type=str, default='/home/trong/code/DeepFilterNet_quantize/noisy_wav')
-    parser.add_argument('--test-audio', type=str, default='/home/trong/code/DeepFilterNet_quantize/test_wav/audio-file.wav')
-    parser.add_argument('--output-dir', type=str, default='/home/trong/code/DeepFilterNet/quantize/gridsearch')
+    # Default to parent models folder
+    default_model = os.path.join(os.path.dirname(__file__), "..", "models", "DeepFilterNet3")
+    parser.add_argument('--model-base-dir', type=str, default="DeepFilterNet3")
+    parser.add_argument('--calib-dir', type=str, default='./calibration_data')
+    parser.add_argument('--test-audio', type=str, help='Input wav file for testing')
+    parser.add_argument('--output-dir', type=str, default='./quantize/gridsearch')
     args = parser.parse_args()
     
     generate_grid_search(args.model_base_dir, args.calib_dir, args.test_audio, args.output_dir)

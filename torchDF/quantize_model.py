@@ -4,6 +4,7 @@ DeepFilterNet3 ONNX Export and Static INT8 Quantization Script
 """
 
 import os
+import sys
 import argparse
 import torch
 import torchaudio
@@ -19,6 +20,10 @@ from onnxruntime.quantization import quantize_static, CalibrationDataReader, Qua
 from onnxruntime.quantization.shape_inference import quant_pre_process
 import soundfile as sf
 import glob
+
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from torch_df_streaming import TorchDFPipeline, ExportableStreamingTorchDF
 
 class DeepFilterNetCalibrationReader(CalibrationDataReader):
@@ -236,7 +241,7 @@ def main():
     import subprocess
     print("\nConverting to ORT format...")
     subprocess.run([
-        "python", "-m", "onnxruntime.tools.convert_onnx_models_to_ort",
+        sys.executable, "-m", "onnxruntime.tools.convert_onnx_models_to_ort",
         args.output_dir,
         "--optimization_style", "Fixed"
     ], check=True)

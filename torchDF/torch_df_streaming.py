@@ -2,10 +2,15 @@
 ONNX exportable classes
 """
 import math
+import os
+import sys
 import torch
 import numpy as np
 import argparse
 import torchaudio
+
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from torch.nn import functional as F
 
@@ -14,7 +19,6 @@ from torch import Tensor
 from typing import Tuple
 
 from df import init_df
-
 
 class ExportableStreamingTorchDF(nn.Module):
     def __init__(self, fft_size, hop_size, nb_bands,

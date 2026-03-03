@@ -1,9 +1,14 @@
+import os
+import sys
 import torch
 import argparse
 
 from torch import Tensor, nn
 from torch.nn import functional as F
 from typing import Tuple
+
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 class TorchDF(nn.Module):

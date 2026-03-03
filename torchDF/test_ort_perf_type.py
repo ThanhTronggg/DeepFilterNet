@@ -5,12 +5,10 @@ import onnxruntime as ort
 import os
 import onnx
 import psutil
+import sys
 
-FP32_PATH = '/home/trong/code/DeepFilterNet/quantize/df3_fp32.onnx'
-INT8_PATH = '/home/trong/code/DeepFilterNet/quantize/df3_int8.onnx'
-FP32_ORT_PATH = '/home/trong/code/DeepFilterNet/quantize/df3_fp32.ort'
-INT8_ORT_PATH = '/home/trong/code/DeepFilterNet/quantize/df3_int8.ort'
-
+# Add parent directory to sys.path so 'df' can be imported if needed
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ---------------------------------------------------------------------------
 # MACs via onnx_tool — runtime input shapes (per-layer accurate)
@@ -24,14 +22,7 @@ _RUNTIME_INPUTS = {
 
 
 def estimate_macs_from_onnx(onnx_path: str, input_dict: dict | None = None) -> int:
-    """Compute total MACs using onnx_tool, propagating actual runtime input shapes.
-
-    - Loads the ONNX model via onnx_tool.Model
-    - Calls graph.shape_infer(actual_inputs) so every intermediate tensor
-      gets its true runtime shape (e.g. Conv output after 480-sample frame)
-    - Calls graph.profile() to accumulate MACs per layer
-    - Returns graph.macs[0]  (integer dense-MACs, excludes sparsity discount)
-    """
+    """Compute total MACs using onnx_tool, propagating actual runtime input shapes."""
     if not os.path.exists(onnx_path):
         return 0
     if input_dict is None:
@@ -45,7 +36,7 @@ def estimate_macs_from_onnx(onnx_path: str, input_dict: dict | None = None) -> i
             m = onnx_tool.Model(onnx_path, mcfg={'verbose': False})
             # Filter inputs to only those actually present in the model
             sess_inputs = {inp.name for inp in
-                           __import__('onnxruntime').InferenceSession(
+                           ort.InferenceSession(
                                onnx_path, providers=['CPUExecutionProvider']
                            ).get_inputs()}
             actual = {k: v for k, v in input_dict.items() if k in sess_inputs}
@@ -55,10 +46,10 @@ def estimate_macs_from_onnx(onnx_path: str, input_dict: dict | None = None) -> i
         # macs[0] = dense MACs, macs[1] = sparse-adjusted MACs
         return int(macs_list[0]) if macs_list else 0
     except ImportError:
-        print("  [WARN] onnx_tool not installed – uv pip install onnx-tool")
+        # print("  [WARN] onnx_tool not installed – uv pip install onnx-tool")
         return 0
     except Exception as e:
-        print(f"  [WARN] onnx_tool profiling failed: {e}")
+        # print(f"  [WARN] onnx_tool profiling failed: {e}")
         return 0
 
 
@@ -191,10 +182,10 @@ def benchmark_model(model_path, num_runs=10000):
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fp32-ort', type=str, default='/home/trong/code/DeepFilterNet/quantize/df3_fp32.ort')
-    parser.add_argument('--int8-ort', type=str, default='/home/trong/code/DeepFilterNet/quantize/df3_int8.ort')
+    parser.add_argument('--fp32-ort', type=str, help='Path to FP32 ORT model')
+    parser.add_argument('--int8-ort', type=str, help='Path to INT8 ORT model')
     parser.add_argument('--eval-folder', type=str, help='Folder containing ORT models to benchmark')
-    parser.add_argument('--num-runs', type=int, default=25000)
+    parser.add_argument('--num-runs', type=int, default=10000)
     args = parser.parse_args()
 
     print(f"OS Available Providers: {ort.get_available_providers()}")
@@ -257,25 +248,25 @@ def main():
             df = pd.DataFrame(results)
             csv_path = os.path.join(args.eval_folder, "detailed_ort_benchmark.csv")
             # Save to CSV
-            df.to_csv(csv_path, mode='a', header=not file_exists, index=False)
-            print(f"\nGridSearch benchmarking results saved/appended to: {csv_path}")
+            df.to_csv(csv_path, index=False)
+            print(f"\nGridSearch benchmarking results saved to: {csv_path}")
             print(df.to_string())
         return
 
     print("Beginning scalar tests...\n")
 
-    if os.path.exists(args.fp32_ort):
+    if args.fp32_ort and os.path.exists(args.fp32_ort):
         fp32_onnx = args.fp32_ort.replace(".ort", ".onnx")
         check_model_info(fp32_onnx, args.fp32_ort)
 
-    if os.path.exists(args.int8_ort):
+    if args.int8_ort and os.path.exists(args.int8_ort):
         int8_onnx = args.int8_ort.replace(".ort", ".onnx")
         check_model_info(int8_onnx, args.int8_ort)
 
     print("\n" + "="*50)
 
-    t_fp32_res = benchmark_model(args.fp32_ort, args.num_runs) if os.path.exists(args.fp32_ort) else None
-    t_int8_res = benchmark_model(args.int8_ort, args.num_runs) if os.path.exists(args.int8_ort) else None
+    t_fp32_res = benchmark_model(args.fp32_ort, args.num_runs) if args.fp32_ort and os.path.exists(args.fp32_ort) else None
+    t_int8_res = benchmark_model(args.int8_ort, args.num_runs) if args.int8_ort and os.path.exists(args.int8_ort) else None
 
     if t_fp32_res and t_int8_res:
         t_fp32, std_fp32, var_fp32, pct99_fp32, cpu_avg_fp32, cpu_max_fp32 = t_fp32_res

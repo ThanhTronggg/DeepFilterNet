@@ -1,10 +1,14 @@
 import copy
+import os
+import sys
 import torch
 import torchaudio
 
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from df import init_df, enhance
 from torch_df_offline import TorchDF
-from libdf import DFTractPy
 from torch_df_streaming import TorchDFPipeline
 
 
@@ -71,3 +75,13 @@ class TestTorchStreaming():
             rust_output = torch.from_numpy(self.df_tract.process(chunk.unsqueeze(0).cpu().numpy()))
 
             assert torch.allclose(onnx_output.to(DEVICE), rust_output.to(DEVICE), atol=1e-3), f'process failed - {i} iteration'
+
+if __name__ == "__main__":
+    tester = TestTorchStreaming()
+    print("Running test_offline_with_enhance...")
+    tester.test_offline_with_enhance()
+    print("Running test_offline_with_streaming...")
+    tester.test_offline_with_streaming()
+    print("Running test_streaming_torch_with_tract...")
+    tester.test_streaming_torch_with_tract()
+    print("All tests passed!")

@@ -1,4 +1,5 @@
 import os
+import sys
 import copy
 import onnx
 import argparse
@@ -9,6 +10,9 @@ import torchaudio
 import numpy as np
 import onnxruntime as ort
 import torch.utils.benchmark as benchmark
+
+# Add parent directory to sys.path so 'df' can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from torch_df_streaming import TorchDFPipeline
 from typing import Dict, Iterable
