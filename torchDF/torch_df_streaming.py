@@ -9,8 +9,7 @@ import numpy as np
 import argparse
 import torchaudio
 
-# Add parent directory to sys.path so 'df' can be imported
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from torch.nn import functional as F
 
@@ -696,6 +695,10 @@ def main(args):
     noisy_audio = noisy_audio.mean(dim=0).unsqueeze(0).to(args.device) # stereo to mono
 
     enhanced_audio = torch_df(noisy_audio, sr).detach().cpu()
+
+    output_dir = os.path.dirname(args.output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
     torchaudio.save(
         args.output_path, enhanced_audio, sr,
