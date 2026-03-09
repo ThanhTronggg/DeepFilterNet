@@ -24,6 +24,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from torch_df_streaming import TorchDFPipeline, ExportableStreamingTorchDF
 
+try:
+    from onnxsim import simplify
+except ImportError:
+    print("Error: Module 'onnxsim' not found. Please run 'pip install onnx-simplifier'")
+    sys.exit(1)
+
+
 class DeepFilterNetCalibrationReader(CalibrationDataReader):
     def __init__(self, calibration_dir: str, hop_size: int = 480, sample_rate: int = 48000, fp32_model_path: str = None):
         self.hop_size = hop_size
@@ -58,6 +65,11 @@ class DeepFilterNetCalibrationReader(CalibrationDataReader):
         if self.current_audio is None or self.current_pos >= len(self.current_audio):
             wav_path = self.wav_files[self.current_file_idx]
             audio, sr = sf.read(wav_path)
+            if sr != self.sample_rate:
+                print(f"Sample rate mismatch: {sr} != {self.sample_rate}")
+                self.current_audio = None
+                self.current_file_idx += 1
+                return self.get_next()
             
             audio = audio.astype(np.float32)
             if len(audio.shape) > 1:
@@ -113,9 +125,9 @@ def export_to_onnx(model: TorchDFPipeline, output_path: str = "df3_torchdf.onnx"
     torch_df(*input_features)
 
     print("Exporting to ONNX using torch.jit.script...")
-    torch_df_script = torch.jit.script(torch_df)
+    # torch_df_script = torch.jit.script(torch_df)
     torch.onnx.export(
-        torch_df_script,
+        torch_df,
         input_features,
         output_path,
         verbose=False,
@@ -126,13 +138,17 @@ def export_to_onnx(model: TorchDFPipeline, output_path: str = "df3_torchdf.onnx"
     print(f"Exported to: {output_path}")
 
 def quantize_model(fp32_model_path: str, int8_model_path: str, calib_dir: str):
-    print(f"Applying shape inference: {fp32_model_path}")
+    print(f"Simplifying ONNX model: {fp32_model_path}...")
     model = onnx.load(fp32_model_path)
-    model_inferred = onnx.shape_inference.infer_shapes(model)
-    preprocessed_path = fp32_model_path.replace(".onnx", "_inferred.onnx")
-    onnx.save(model_inferred, preprocessed_path)
-    fp32_model_path = preprocessed_path
-
+    
+    model_simp, check = simplify(model)
+    if not check:
+        raise RuntimeError("Simplified ONNX model could not be validated!")
+        
+    simplified_path = fp32_model_path.replace(".onnx", "_simp.onnx")
+    onnx.save(model_simp, simplified_path)
+    print(f"Simplified model saved to: {simplified_path}")
+    
     dr = DeepFilterNetCalibrationReader(calib_dir, fp32_model_path=fp32_model_path)
     
     onnx_model = onnx.load(fp32_model_path)
@@ -145,16 +161,35 @@ def quantize_model(fp32_model_path: str, int8_model_path: str, calib_dir: str):
         int8_model_path,
         calibration_data_reader=dr,
         quant_format=QuantFormat.QDQ,
-        per_channel=False,
+        # per_channel=False,
         weight_type=QuantType.QInt8,
-        activation_type=QuantType.QUInt8,
+        activation_type=QuantType.QInt8,
         calibrate_method=CalibrationMethod.MinMax,
         op_types_to_quantize = [
         "Conv",
         "Gemm",
+        "Add",
+        "Matmul",
+        # "ConvTranspose",
+        # "Relu",
+        # "BatchNormalization",
+        # "Linear"
     ]
     )
     print(f"Quantized model saved to: {int8_model_path}")
+
+    try:
+        print(f"Simplifying INT8 ONNX model: {int8_model_path}...")
+        model_int8 = onnx.load(int8_model_path)
+        model_int8_simp, check_int8 = simplify(model_int8)
+        if not check_int8:
+            print("Warning: Simplified INT8 ONNX model could not be validated!")
+        
+        simplified_int8_path = int8_model_path.replace(".onnx", "_simp.onnx")
+        onnx.save(model_int8_simp, simplified_int8_path)
+        print(f"Simplified INT8 model saved to: {simplified_int8_path}")
+    except Exception as e:
+        print(f"Warning: Could not simplify INT8 model. Error: {e}")
 
 def test_inference(onnx_path: str, input_wav: str, output_wav: str):
     session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
